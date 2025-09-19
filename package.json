@@ -16,11 +16,9 @@
       "icon": "icon.ico"
     }
   },
-"devDependencies": {
-  "electron": "^29.0.0",
-  "electron-builder": "^24.6.0",
-  "electron-store": "^8.2.0"
-}
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.6.0",
+    "electron-store": "^8.2.0"
   }
 }
-
