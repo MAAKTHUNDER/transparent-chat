@@ -1,15 +1,18 @@
 {
   "name": "transparent-chat",
   "version": "1.0.0",
+  "description": "Transparent Chat Overlay",
+  "author": "YourName",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder"
   },
   "build": {
-    "appId": "com.example.transparentchat",
+    "appId": "com.transparent.chat",
+    "publish": "never",
     "win": {
-      "target": "nsis", 
+      "target": "nsis",
       "icon": "icon.ico"
     }
   },
