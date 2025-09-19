@@ -41,74 +41,87 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
 
   // Save bounds when window is moved/resized
   win.on('close', () => {
-    store.set('windowBounds', win.getBounds());
+    if (!win.isDestroyed()) {
+      store.set('windowBounds', win.getBounds());
+    }
   });
 
-  // Clean up previous shortcuts and register new one
-  globalShortcut.unregisterAll();
-  registerToggleShortcut(chatUrl);
+  // Register F10 shortcut for THIS window only (not global)
+  registerWindowShortcut(chatUrl);
 }
 
-function registerToggleShortcut(chatUrl) {
-  globalShortcut.register('F10', () => {
-    // Store current window state BEFORE toggling
-    const currentBounds = win.getBounds();
-    const currentUrl = win.webContents.getURL();
+function registerWindowShortcut(chatUrl) {
+  // Remove any existing global shortcuts
+  globalShortcut.unregisterAll();
+  
+  // Use webContents to register shortcut that only works when window is focused
+  win.webContents.on('before-input-event', (event, input) => {
+    // Only trigger when F10 is pressed and window is focused
+    if (input.key === 'F10' && input.type === 'keyDown' && win.isFocused()) {
+      event.preventDefault();
+      toggleWindowMode(chatUrl);
+    }
+  });
+}
+
+function toggleWindowMode(chatUrl) {
+  // Store current window state BEFORE toggling
+  const currentBounds = win.getBounds();
+  const currentUrl = win.webContents.getURL();
+  
+  locked = !locked;
+  console.log(`Switching to ${locked ? 'locked (transparent)' : 'unlocked (windowed)'} mode`);
+
+  // Create new window BEFORE closing the old one to prevent app from closing
+  const newWin = new BrowserWindow({
+    x: currentBounds.x,
+    y: currentBounds.y,
+    width: currentBounds.width,
+    height: currentBounds.height,
+    frame: !locked,           // No frame when locked
+    transparent: locked,      // Transparent when locked
+    alwaysOnTop: locked,      // Always on top when locked
+    resizable: true,
+    skipTaskbar: false,
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    }
+  });
+
+  newWin.loadURL(currentUrl);
+
+  newWin.once('ready-to-show', () => {
+    // Now close the old window and switch to new one
+    const oldWin = win;
+    win = newWin; // Switch reference to new window
     
-    locked = !locked;
-    console.log(`Switching to ${locked ? 'locked (transparent)' : 'unlocked (windowed)'} mode`);
-
-    // Remove close listener temporarily to prevent saving bounds during toggle
-    win.removeAllListeners('close');
+    // Show new window first
+    win.show();
     
-    // Close current window
-    win.close();
+    if (locked) {
+      // In locked mode: transparent overlay, ignore mouse
+      win.setIgnoreMouseEvents(true);
+    } else {
+      // In unlocked mode: normal window, accept mouse events
+      win.setIgnoreMouseEvents(false);
+      win.focus(); // Focus the window when unlocked
+    }
 
-    // Small delay to ensure clean transition
-    setTimeout(() => {
-      // Create new window with EXACT same bounds but different frame/transparency
-      win = new BrowserWindow({
-        x: currentBounds.x,
-        y: currentBounds.y,
-        width: currentBounds.width,
-        height: currentBounds.height,
-        frame: !locked,           // No frame when locked
-        transparent: locked,      // Transparent when locked
-        alwaysOnTop: locked,      // Always on top when locked
-        resizable: true,
-        skipTaskbar: false,
-        show: false,
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-        }
-      });
-
-      win.loadURL(currentUrl);
-
-      win.once('ready-to-show', () => {
-        win.show();
-        
-        if (locked) {
-          // In locked mode: transparent overlay, ignore mouse
-          win.setIgnoreMouseEvents(true);
-        } else {
-          // In unlocked mode: normal window, accept mouse events
-          win.setIgnoreMouseEvents(false);
-          win.focus(); // Focus the window when unlocked
-        }
-      });
-
-      // Re-add close handler
-      win.on('close', () => {
+    // Set up event handlers for new window
+    win.on('close', () => {
+      if (!win.isDestroyed()) {
         store.set('windowBounds', win.getBounds());
-      });
+      }
+    });
 
-      // Re-register shortcut for the new window
-      globalShortcut.unregisterAll();
-      registerToggleShortcut(chatUrl);
+    // Register shortcut for new window
+    registerWindowShortcut(chatUrl);
 
-    }, 50); // Minimal delay for clean transition
+    // Now safely close old window
+    oldWin.removeAllListeners('close'); // Prevent saving bounds
+    oldWin.close();
   });
 }
 
@@ -168,7 +181,7 @@ app.on('will-quit', () => {
 });
 
 app.on('activate', () => {
-  if (win) {
+  if (win && !win.isDestroyed()) {
     win.show();
     win.focus();
   }
