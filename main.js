@@ -3,126 +3,173 @@ const Store = require('electron-store');
 const prompt = require('electron-prompt');
 
 let win;
-let locked = true; // start in locked mode (overlay)
+let locked = true;
 const store = new Store();
 
-function createWindow(chatUrl) {
-  // Load previous bounds or use defaults
-  const bounds = store.get('windowBounds') || { width: 400, height: 600 };
+function createWindow(chatUrl, isFrameless = true, customBounds = null) {
+  // Use custom bounds if provided, otherwise use stored bounds or defaults
+  const bounds = customBounds || store.get('windowBounds') || { width: 400, height: 600, x: 100, y: 100 };
 
   win = new BrowserWindow({
     ...bounds,
-    frame: false, // start frameless (locked)
-    transparent: true,
-    alwaysOnTop: true,
+    frame: !isFrameless,
+    transparent: isFrameless,
+    alwaysOnTop: isFrameless,
     resizable: true,
-    skipTaskbar: false, // show in taskbar
+    skipTaskbar: false,
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: false,
+      contextIsolation: true,
     }
   });
 
   win.loadURL(chatUrl);
 
-  // Start click-through
-  win.setIgnoreMouseEvents(true);
+  // Show window when ready and set proper state
+  win.once('ready-to-show', () => {
+    win.show();
+    if (isFrameless) {
+      win.setIgnoreMouseEvents(true);
+      win.focus(); // Ensure it's focused
+    }
+  });
+
+  if (isFrameless) {
+    win.setIgnoreMouseEvents(true);
+  }
 
   // Save bounds when window is moved/resized
   win.on('close', () => {
     store.set('windowBounds', win.getBounds());
   });
 
-  // Toggle lock/unlock with F10
+  // Clean up previous shortcuts and register new one
+  globalShortcut.unregisterAll();
+  registerToggleShortcut(chatUrl);
+}
+
+function registerToggleShortcut(chatUrl) {
   globalShortcut.register('F10', () => {
+    // Store current window state BEFORE toggling
+    const currentBounds = win.getBounds();
+    const currentUrl = win.webContents.getURL();
+    
     locked = !locked;
+    console.log(`Switching to ${locked ? 'locked (transparent)' : 'unlocked (windowed)'} mode`);
 
-    if (locked) {
-      // Locked mode → transparent overlay
-      win.setIgnoreMouseEvents(true);
-      win.setBounds(store.get('windowBounds') || win.getBounds());
-      win.setResizable(true);
-      win.setAlwaysOnTop(true);
+    // Remove close listener temporarily to prevent saving bounds during toggle
+    win.removeAllListeners('close');
+    
+    // Close current window
+    win.close();
 
-      // Hide frame dynamically
-      win.setBounds(win.getBounds()); // preserve position
-      win.setBounds(win.getBounds()); // hack: force redraw
-      win.setResizable(true);
-
-      win.setBounds(win.getBounds()); // keep same size
-      win.setResizable(true);
-      win.setAlwaysOnTop(true);
-
-      win.setFullScreenable(false);
-      win.setMenuBarVisibility(false);
-      win.setClosable(true);
-
-      // Re-create as frameless
-      win.setBounds(win.getBounds());
-      win.setIgnoreMouseEvents(true);
-      win.setAlwaysOnTop(true);
-      win.setFullScreenable(false);
-      win.setResizable(true);
-      win.setMenuBarVisibility(false);
-
-      win.setBounds(win.getBounds());
-      win.setResizable(true);
-      win.setMenuBarVisibility(false);
-
-      console.log("Overlay locked: Transparent mode");
-    } else {
-      // Unlocked mode → normal window with title bar
-      const bounds = win.getBounds();
-      const url = win.webContents.getURL();
-
-      // Destroy frameless window and recreate with frame
-      win.close();
+    // Small delay to ensure clean transition
+    setTimeout(() => {
+      // Create new window with EXACT same bounds but different frame/transparency
       win = new BrowserWindow({
-        ...bounds,
-        frame: true, // show title bar
-        transparent: false,
-        alwaysOnTop: false,
+        x: currentBounds.x,
+        y: currentBounds.y,
+        width: currentBounds.width,
+        height: currentBounds.height,
+        frame: !locked,           // No frame when locked
+        transparent: locked,      // Transparent when locked
+        alwaysOnTop: locked,      // Always on top when locked
         resizable: true,
         skipTaskbar: false,
+        show: false,
         webPreferences: {
           nodeIntegration: false,
+          contextIsolation: true,
         }
       });
 
-      win.loadURL(url);
+      win.loadURL(currentUrl);
 
+      win.once('ready-to-show', () => {
+        win.show();
+        
+        if (locked) {
+          // In locked mode: transparent overlay, ignore mouse
+          win.setIgnoreMouseEvents(true);
+        } else {
+          // In unlocked mode: normal window, accept mouse events
+          win.setIgnoreMouseEvents(false);
+          win.focus(); // Focus the window when unlocked
+        }
+      });
+
+      // Re-add close handler
       win.on('close', () => {
         store.set('windowBounds', win.getBounds());
       });
 
-      // Re-register F10 toggle on new window
-      globalShortcut.register('F10', () => {
-        locked = true;
-        win.close();
-        createWindow(url); // recreate frameless overlay
-      });
+      // Re-register shortcut for the new window
+      globalShortcut.unregisterAll();
+      registerToggleShortcut(chatUrl);
 
-      console.log("Overlay unlocked: Windowed mode");
-    }
+    }, 50); // Minimal delay for clean transition
   });
 }
 
 app.whenReady().then(() => {
+  // Security: Prevent new window creation
+  app.on('web-contents-created', (event, contents) => {
+    contents.on('new-window', (event, navigationUrl) => {
+      event.preventDefault();
+    });
+  });
+
+  // Create a temporary window to ensure prompt appears on top
+  const promptWindow = new BrowserWindow({
+    width: 400,
+    height: 200,
+    show: false,
+    alwaysOnTop: true,
+    frame: false,
+    transparent: true,
+  });
+
   prompt({
     title: 'Enter Chat URL',
     label: 'Chat URL:',
-    value: 'https://multichat.livepush.io/mcSprPsAwsSs0D2XU', // default URL
+    value: store.get('lastChatUrl') || 'https://multichat.livepush.io/mcSprPsAwsSs0D2XU',
     inputAttrs: {
       type: 'url'
     },
-    type: 'input'
+    type: 'input',
+    alwaysOnTop: true,        // Force prompt to stay on top
+    parent: promptWindow,     // Use our temporary window as parent
   }).then((chatUrl) => {
+    promptWindow.close(); // Clean up temporary window
+    
     if (!chatUrl || chatUrl.trim() === '') {
       chatUrl = 'https://multichat.livepush.io/mcSprPsAwsSs0D2XU';
     }
-    createWindow(chatUrl);
-  }).catch(console.error);
+    
+    // Save the URL for next time
+    store.set('lastChatUrl', chatUrl);
+    createWindow(chatUrl, true); // Start in locked (transparent) mode
+    
+  }).catch((err) => {
+    promptWindow.close(); // Clean up on error too
+    console.error('Prompt cancelled or failed:', err);
+    app.quit();
+  });
 });
 
 app.on('window-all-closed', () => {
+  globalShortcut.unregisterAll();
   app.quit();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
+
+app.on('activate', () => {
+  if (win) {
+    win.show();
+    win.focus();
+  }
 });
