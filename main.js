@@ -3,7 +3,7 @@ const Store = require('electron-store');
 const prompt = require('electron-prompt');
 
 let win;
-let locked = true; // start click-through by default
+let locked = true; // start in locked mode (overlay)
 const store = new Store();
 
 function createWindow(chatUrl) {
@@ -12,20 +12,19 @@ function createWindow(chatUrl) {
 
   win = new BrowserWindow({
     ...bounds,
-    frame: false,
+    frame: false, // start frameless (locked)
     transparent: true,
     alwaysOnTop: true,
     resizable: true,
-    skipTaskbar: true,
+    skipTaskbar: false, // show in taskbar
     webPreferences: {
       nodeIntegration: false,
     }
   });
 
-  // Load chosen chat URL
   win.loadURL(chatUrl);
 
-  // Overlay starts click-through
+  // Start click-through
   win.setIgnoreMouseEvents(true);
 
   // Save bounds when window is moved/resized
@@ -36,8 +35,74 @@ function createWindow(chatUrl) {
   // Toggle lock/unlock with F10
   globalShortcut.register('F10', () => {
     locked = !locked;
-    win.setIgnoreMouseEvents(locked);
-    console.log("Overlay locked:", locked);
+
+    if (locked) {
+      // Locked mode → transparent overlay
+      win.setIgnoreMouseEvents(true);
+      win.setBounds(store.get('windowBounds') || win.getBounds());
+      win.setResizable(true);
+      win.setAlwaysOnTop(true);
+
+      // Hide frame dynamically
+      win.setBounds(win.getBounds()); // preserve position
+      win.setBounds(win.getBounds()); // hack: force redraw
+      win.setResizable(true);
+
+      win.setBounds(win.getBounds()); // keep same size
+      win.setResizable(true);
+      win.setAlwaysOnTop(true);
+
+      win.setFullScreenable(false);
+      win.setMenuBarVisibility(false);
+      win.setClosable(true);
+
+      // Re-create as frameless
+      win.setBounds(win.getBounds());
+      win.setIgnoreMouseEvents(true);
+      win.setAlwaysOnTop(true);
+      win.setFullScreenable(false);
+      win.setResizable(true);
+      win.setMenuBarVisibility(false);
+
+      win.setBounds(win.getBounds());
+      win.setResizable(true);
+      win.setMenuBarVisibility(false);
+
+      console.log("Overlay locked: Transparent mode");
+    } else {
+      // Unlocked mode → normal window with title bar
+      const bounds = win.getBounds();
+      const url = win.webContents.getURL();
+
+      // Destroy frameless window and recreate with frame
+      win.close();
+      win = new BrowserWindow({
+        ...bounds,
+        frame: true, // show title bar
+        transparent: false,
+        alwaysOnTop: false,
+        resizable: true,
+        skipTaskbar: false,
+        webPreferences: {
+          nodeIntegration: false,
+        }
+      });
+
+      win.loadURL(url);
+
+      win.on('close', () => {
+        store.set('windowBounds', win.getBounds());
+      });
+
+      // Re-register F10 toggle on new window
+      globalShortcut.register('F10', () => {
+        locked = true;
+        win.close();
+        createWindow(url); // recreate frameless overlay
+      });
+
+      console.log("Overlay unlocked: Windowed mode");
+    }
   });
 }
 
@@ -51,7 +116,7 @@ app.whenReady().then(() => {
     },
     type: 'input'
   }).then((chatUrl) => {
-    if (chatUrl === null || chatUrl.trim() === '') {
+    if (!chatUrl || chatUrl.trim() === '') {
       chatUrl = 'https://multichat.livepush.io/mcSprPsAwsSs0D2XU';
     }
     createWindow(chatUrl);
