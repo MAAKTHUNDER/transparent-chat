@@ -12,7 +12,7 @@
     "appId": "com.transparent.chat",
     "publish": [],
     "win": {
-      "target": "nsis",
+      "target": "portable",
       "icon": "icon.ico"
     }
   },
