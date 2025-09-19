@@ -10,7 +10,7 @@
   },
   "build": {
     "appId": "com.transparent.chat",
-    "publish": "never",
+    "publish": [],   // 👈 important fix
     "win": {
       "target": "nsis",
       "icon": "icon.ico"
