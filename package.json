@@ -16,11 +16,12 @@
       "icon": "icon.ico"
     }
   },
-"devDependencies": {
-  "electron": "^29.0.0",
-  "electron-builder": "^24.6.0",
-  "electron-store": "^8.2.0",
-  "electron-prompt": "^1.7.0"
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "electron-prompt": "^1.7.0"
+  },
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^24.6.0"
+  }
 }
-}
-
