@@ -31,7 +31,10 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
     win.show();
     if (isFrameless) {
       win.setIgnoreMouseEvents(true);
+      injectLockedModeCSS(); // Hide scrollbars and setup auto-scroll
       win.focus(); // Ensure it's focused
+    } else {
+      injectUnlockedModeCSS(); // Show scrollbars normally
     }
   });
 
@@ -50,7 +53,121 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
   registerWindowShortcut(chatUrl);
 }
 
-function registerWindowShortcut(chatUrl) {
+function injectLockedModeCSS() {
+  // Hide scrollbars and enable auto-scroll in locked mode
+  const css = `
+    /* Hide all scrollbars */
+    ::-webkit-scrollbar {
+      display: none !important;
+      width: 0px !important;
+      background: transparent !important;
+    }
+    
+    * {
+      -ms-overflow-style: none !important;
+      scrollbar-width: none !important;
+    }
+    
+    /* Ensure body and html can still scroll */
+    html, body {
+      overflow: auto !important;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    
+    /* Hide any custom scrollbar elements */
+    .scrollbar, [class*="scroll"], [id*="scroll"] {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    
+    .scrollbar::-webkit-scrollbar, 
+    [class*="scroll"]::-webkit-scrollbar, 
+    [id*="scroll"]::-webkit-scrollbar {
+      display: none !important;
+    }
+  `;
+
+  win.webContents.insertCSS(css);
+  
+  // Auto-scroll to bottom function
+  const autoScrollScript = `
+    (function() {
+      let lastScrollHeight = 0;
+      
+      function scrollToBottom() {
+        const body = document.body;
+        const html = document.documentElement;
+        const scrollHeight = Math.max(body.scrollHeight, html.scrollHeight);
+        
+        // Only scroll if content height increased (new message)
+        if (scrollHeight > lastScrollHeight) {
+          window.scrollTo({
+            top: scrollHeight,
+            behavior: 'smooth'
+          });
+          lastScrollHeight = scrollHeight;
+        }
+      }
+      
+      // Check for new messages every 500ms
+      const scrollInterval = setInterval(scrollToBottom, 500);
+      
+      // Also scroll when DOM changes (new elements added)
+      const observer = new MutationObserver(function(mutations) {
+        let shouldScroll = false;
+        mutations.forEach(function(mutation) {
+          if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+            shouldScroll = true;
+          }
+        });
+        if (shouldScroll) {
+          setTimeout(scrollToBottom, 100); // Small delay to let content render
+        }
+      });
+      
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true
+      });
+      
+      // Clean up when page unloads
+      window.addEventListener('beforeunload', function() {
+        clearInterval(scrollInterval);
+        observer.disconnect();
+      });
+      
+      // Initial scroll to bottom
+      setTimeout(scrollToBottom, 1000);
+    })();
+  `;
+
+  win.webContents.executeJavaScript(autoScrollScript);
+}
+
+function injectUnlockedModeCSS() {
+  // Remove hidden scrollbar CSS and restore normal scrollbars
+  const css = `
+    /* Restore scrollbars */
+    ::-webkit-scrollbar {
+      display: block !important;
+      width: auto !important;
+    }
+    
+    * {
+      -ms-overflow-style: auto !important;
+      scrollbar-width: auto !important;
+    }
+    
+    html, body {
+      overflow: auto !important;
+      scrollbar-width: auto !important;
+      -ms-overflow-style: auto !important;
+    }
+  `;
+
+  win.webContents.insertCSS(css);
+}
   // Remove any existing global shortcuts
   globalShortcut.unregisterAll();
   
@@ -101,11 +218,13 @@ function toggleWindowMode(chatUrl) {
     win.show();
     
     if (locked) {
-      // In locked mode: transparent overlay, ignore mouse
+      // In locked mode: transparent overlay, ignore mouse, hide scrollbars, auto-scroll
       win.setIgnoreMouseEvents(true);
+      injectLockedModeCSS();
     } else {
-      // In unlocked mode: normal window, accept mouse events
+      // In unlocked mode: normal window, accept mouse events, show scrollbars
       win.setIgnoreMouseEvents(false);
+      injectUnlockedModeCSS();
       win.focus(); // Focus the window when unlocked
     }
 
