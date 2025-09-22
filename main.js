@@ -7,6 +7,7 @@ let locked = true;
 const store = new Store();
 
 function createWindow(chatUrl, isFrameless = true, customBounds = null) {
+  // Use custom bounds if provided, otherwise use stored bounds or defaults
   const bounds = customBounds || store.get('windowBounds') || { width: 400, height: 600, x: 100, y: 100 };
 
   win = new BrowserWindow({
@@ -16,7 +17,7 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
     alwaysOnTop: isFrameless,
     resizable: true,
     skipTaskbar: false,
-    show: false,
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -25,15 +26,15 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
 
   win.loadURL(chatUrl);
 
-  
+  // Show window when ready and set proper state
   win.once('ready-to-show', () => {
     win.show();
     if (isFrameless) {
       win.setIgnoreMouseEvents(true);
-      injectLockedModeCSS();
-      win.focus();
+      injectLockedModeCSS(); // Hide scrollbars and setup auto-scroll
+      win.focus(); // Ensure it's focused
     } else {
-      injectUnlockedModeCSS();
+      injectUnlockedModeCSS(); // Show scrollbars normally
     }
   });
 
@@ -41,34 +42,39 @@ function createWindow(chatUrl, isFrameless = true, customBounds = null) {
     win.setIgnoreMouseEvents(true);
   }
 
+  // Save bounds when window is moved/resized
   win.on('close', () => {
     if (!win.isDestroyed()) {
       store.set('windowBounds', win.getBounds());
     }
   });
 
+  // Register F10 shortcut for THIS window only (not global)
   registerWindowShortcut(chatUrl);
 }
 
 function injectLockedModeCSS() {
+  // Hide scrollbars and enable auto-scroll in locked mode
   const css = '::-webkit-scrollbar { display: none !important; width: 0px !important; background: transparent !important; } * { -ms-overflow-style: none !important; scrollbar-width: none !important; } html, body { overflow: auto !important; scrollbar-width: none !important; -ms-overflow-style: none !important; } .scrollbar, [class*="scroll"], [id*="scroll"] { scrollbar-width: none !important; -ms-overflow-style: none !important; } .scrollbar::-webkit-scrollbar, [class*="scroll"]::-webkit-scrollbar, [id*="scroll"]::-webkit-scrollbar { display: none !important; }';
 
   win.webContents.insertCSS(css);
   
+  // Auto-scroll to bottom function
   const autoScrollScript = '(function() { let lastScrollHeight = 0; function scrollToBottom() { const body = document.body; const html = document.documentElement; const scrollHeight = Math.max(body.scrollHeight, html.scrollHeight); if (scrollHeight > lastScrollHeight) { window.scrollTo({ top: scrollHeight, behavior: "smooth" }); lastScrollHeight = scrollHeight; } } const scrollInterval = setInterval(scrollToBottom, 500); const observer = new MutationObserver(function(mutations) { let shouldScroll = false; mutations.forEach(function(mutation) { if (mutation.type === "childList" && mutation.addedNodes.length > 0) { shouldScroll = true; } }); if (shouldScroll) { setTimeout(scrollToBottom, 100); } }); observer.observe(document.body, { childList: true, subtree: true }); window.addEventListener("beforeunload", function() { clearInterval(scrollInterval); observer.disconnect(); }); setTimeout(scrollToBottom, 1000); })();';
 
   win.webContents.executeJavaScript(autoScrollScript);
 }
 
 function injectUnlockedModeCSS() {
+  // Remove hidden scrollbar CSS and restore normal scrollbars
   const css = '::-webkit-scrollbar { display: block !important; width: auto !important; } * { -ms-overflow-style: auto !important; scrollbar-width: auto !important; } html, body { overflow: auto !important; scrollbar-width: auto !important; -ms-overflow-style: auto !important; }';
 
   win.webContents.insertCSS(css);
 }
-  
+  // Remove any existing global shortcuts
   globalShortcut.unregisterAll();
   
-  
+  // Use webContents to register shortcut that only works when window is focused
   win.webContents.on('before-input-event', (event, input) => {
     // Only trigger when F10 is pressed and window is focused
     if (input.key === 'F10' && input.type === 'keyDown' && win.isFocused()) {
@@ -79,20 +85,22 @@ function injectUnlockedModeCSS() {
 }
 
 function toggleWindowMode(chatUrl) {
+  // Store current window state BEFORE toggling
   const currentBounds = win.getBounds();
   const currentUrl = win.webContents.getURL();
   
   locked = !locked;
   console.log(`Switching to ${locked ? 'locked (transparent)' : 'unlocked (windowed)'} mode`);
 
+  // Create new window BEFORE closing the old one to prevent app from closing
   const newWin = new BrowserWindow({
     x: currentBounds.x,
     y: currentBounds.y,
     width: currentBounds.width,
     height: currentBounds.height,
-    frame: !locked,
-    transparent: locked,
-    alwaysOnTop: locked,
+    frame: !locked,           // No frame when locked
+    transparent: locked,      // Transparent when locked
+    alwaysOnTop: locked,      // Always on top when locked
     resizable: true,
     skipTaskbar: false,
     show: false,
@@ -105,7 +113,7 @@ function toggleWindowMode(chatUrl) {
   newWin.loadURL(currentUrl);
 
   newWin.once('ready-to-show', () => {
-    
+    // Now close the old window and switch to new one
     const oldWin = win;
     win = newWin; // Switch reference to new window
     
@@ -113,37 +121,41 @@ function toggleWindowMode(chatUrl) {
     win.show();
     
     if (locked) {
+      // In locked mode: transparent overlay, ignore mouse, hide scrollbars, auto-scroll
       win.setIgnoreMouseEvents(true);
       injectLockedModeCSS();
     } else {
+      // In unlocked mode: normal window, accept mouse events, show scrollbars
       win.setIgnoreMouseEvents(false);
       injectUnlockedModeCSS();
-      win.focus();
+      win.focus(); // Focus the window when unlocked
     }
 
-    
+    // Set up event handlers for new window
     win.on('close', () => {
       if (!win.isDestroyed()) {
         store.set('windowBounds', win.getBounds());
       }
     });
 
-    
+    // Register shortcut for new window
     registerWindowShortcut(chatUrl);
 
-    
+    // Now safely close old window
     oldWin.removeAllListeners('close'); // Prevent saving bounds
     oldWin.close();
   });
 }
 
 app.whenReady().then(() => {
+  // Security: Prevent new window creation
   app.on('web-contents-created', (event, contents) => {
     contents.on('new-window', (event, navigationUrl) => {
       event.preventDefault();
     });
   });
 
+  // Create a temporary window to ensure prompt appears on top
   const promptWindow = new BrowserWindow({
     width: 400,
     height: 200,
@@ -161,20 +173,21 @@ app.whenReady().then(() => {
       type: 'url'
     },
     type: 'input',
-    alwaysOnTop: true,
-    parent: promptWindow,
+    alwaysOnTop: true,        // Force prompt to stay on top
+    parent: promptWindow,     // Use our temporary window as parent
   }).then((chatUrl) => {
-    promptWindow.close();
+    promptWindow.close(); // Clean up temporary window
     
     if (!chatUrl || chatUrl.trim() === '') {
       chatUrl = 'https://multichat.livepush.io/mcSprPsAwsSs0D2XU';
     }
     
+    // Save the URL for next time
     store.set('lastChatUrl', chatUrl);
-    createWindow(chatUrl, true);
+    createWindow(chatUrl, true); // Start in locked (transparent) mode
     
   }).catch((err) => {
-    promptWindow.close();
+    promptWindow.close(); // Clean up on error too
     console.error('Prompt cancelled or failed:', err);
     app.quit();
   });
